@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -147,6 +148,22 @@ def is_blocked(q):
     return any(t in q.lower() for t in BLOCKED_TOPICS)
 
 
+def get_doc_id(doc):
+    md = getattr(doc, "metadata", {}) or {}
+    if isinstance(md, dict):
+        if md.get("id"):
+            return str(md.get("id"))
+        if md.get("source"):
+            return str(md.get("source"))
+    content = getattr(doc, "page_content", "") or ""
+    return hashlib.md5(content.encode("utf-8")).hexdigest()
+
+
+def get_doc_source(doc):
+    md = getattr(doc, "metadata", {}) or {}
+    return md.get("source", "unknown")
+
+
 def hybrid_retrieve(query, k=3):
     query = redact_pii(query)
     # vector
@@ -161,9 +178,10 @@ def hybrid_retrieve(query, k=3):
     seen = set()
     merged = []
     for h in vec_hits + bm25_hits:
-        if h.metadata["id"] not in seen:
+        doc_id = get_doc_id(h)
+        if doc_id not in seen:
             merged.append(h)
-            seen.add(h.metadata["id"])
+            seen.add(doc_id)
     return merged[:k]
 
 
@@ -197,7 +215,7 @@ def answer(query):
             [],
         )
     hits = hybrid_retrieve(query)
-    context = "\n\n".join([f"[{h.metadata['source']}] {h.page_content}" for h in hits])
+    context = "\n\n".join([f"[{get_doc_source(h)}] {h.page_content}" for h in hits])
     prompt = f"{SYSTEM}\nContext:\n{context}\n\nQuestion: {query}\nAnswer:"
     resp = (
         llm.invoke(prompt).content
@@ -216,5 +234,5 @@ if q:
     st.write(ans)
     with st.expander("Sources used"):
         for h in hits:
-            st.caption(f"{h.metadata['source']} – {h.metadata['id']}")
+            st.caption(f"{get_doc_source(h)} – {get_doc_id(h)}")
             st.code(h.page_content)
