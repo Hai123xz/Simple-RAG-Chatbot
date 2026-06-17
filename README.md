@@ -4,7 +4,7 @@
 # Run
 - run pip install -r requirements.txt
 - streamlit run app.py
-- Or you can go to https://simple-rag-chatbot-123xz.streamlit.app/ to use.
+- Or you can go to https://simple-rag-chatbot-123z.streamlit.app/ to use.
 
 # Usage
 - Upload pdf file
