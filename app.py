@@ -2,6 +2,7 @@ import csv
 import difflib
 import hashlib
 import io
+import math
 import os
 import tempfile
 from typing import List
@@ -128,6 +129,31 @@ def _get_doc_id(h: Document) -> str:
         return str(md.get("chunk_id"))
     content = getattr(h, "page_content", "") or ""
     return hashlib.md5(content.encode("utf-8")).hexdigest()
+
+
+def _cosine_similarity(a, b) -> float:
+    """Compute cosine similarity between two vectors (iterables). Returns -1..1.
+
+    Falls back to 0.0 on error.
+    """
+    try:
+        a_vec = [float(x) for x in a]
+        b_vec = [float(x) for x in b]
+    except Exception:
+        return 0.0
+    if not a_vec or not b_vec:
+        return 0.0
+    # if dims differ, truncate to shortest
+    min_len = min(len(a_vec), len(b_vec))
+    if len(a_vec) != len(b_vec):
+        a_vec = a_vec[:min_len]
+        b_vec = b_vec[:min_len]
+    dot = sum(x * y for x, y in zip(a_vec, b_vec))
+    na = math.sqrt(sum(x * x for x in a_vec))
+    nb = math.sqrt(sum(y * y for y in b_vec))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
 
 
 # Top-level tabs: Ask (existing QA) and Test (new evaluation tab)
@@ -438,31 +464,134 @@ with test_tab:
                                     )
                                     answer_text = context
 
-                            # similarity (simple string-level comparison)
-                            norm = lambda s: (s or "").strip().lower()
+                            # semantic comparison using embeddings
                             sim = 0.0
-                            if expected.strip():
-                                sim = difflib.SequenceMatcher(
-                                    None, norm(expected), norm(answer_text)
-                                ).ratio()
-
-                            passed = (
-                                sim >= float(sim_threshold)
-                                if expected.strip()
-                                else False
-                            )
-
-                            top_ids = [_get_doc_id(h) for h in hits]
+                            rel_sim_max = 0.0
                             rel_found_top1 = False
                             rel_found_topk = False
-                            if relevant:
-                                rel_found_top1 = (
-                                    len(top_ids) >= 1 and top_ids[0] == relevant
-                                )
-                                rel_found_topk = relevant in top_ids
-                            else:
-                                # fallback: check if expected text appears in any retrieved chunk
+                            try:
+                                emb_model = get_embeddings_model()
+                                expected_emb = None
+                                answer_emb = None
                                 if expected.strip():
+                                    try:
+                                        expected_emb = emb_model.embed_query(expected)
+                                    except Exception:
+                                        try:
+                                            expected_emb = emb_model.embed_documents(
+                                                [expected]
+                                            )[0]
+                                        except Exception:
+                                            expected_emb = None
+                                if (answer_text or "").strip():
+                                    try:
+                                        answer_emb = emb_model.embed_query(answer_text)
+                                    except Exception:
+                                        try:
+                                            answer_emb = emb_model.embed_documents(
+                                                [answer_text]
+                                            )[0]
+                                        except Exception:
+                                            answer_emb = None
+                                if expected_emb is not None and answer_emb is not None:
+                                    cos = _cosine_similarity(expected_emb, answer_emb)
+                                    sim = (cos + 1.0) / 2.0
+                                else:
+                                    norm = lambda s: (s or "").strip().lower()
+                                    if expected.strip():
+                                        sim = difflib.SequenceMatcher(
+                                            None, norm(expected), norm(answer_text)
+                                        ).ratio()
+                                    else:
+                                        sim = 0.0
+
+                                # relevant_doc (CSV) similarity to retrieved chunks
+                                if relevant.strip():
+                                    rel_emb = None
+                                    try:
+                                        rel_emb = emb_model.embed_query(relevant)
+                                    except Exception:
+                                        rel_emb = emb_model.embed_documents([relevant])[
+                                            0
+                                        ]
+                                    hit_texts = [h.page_content or "" for h in hits]
+                                    if hit_texts:
+                                        try:
+                                            hits_embs = emb_model.embed_documents(
+                                                hit_texts
+                                            )
+                                        except Exception:
+                                            hits_embs = []
+                                        sims = []
+                                        for he in hits_embs:
+                                            if he is None:
+                                                sims.append(0.0)
+                                                continue
+                                            cosh = _cosine_similarity(rel_emb, he)
+                                            sims.append((cosh + 1.0) / 2.0)
+                                        if sims:
+                                            rel_sim_max = max(sims)
+                                            rel_found_top1 = sims[0] >= float(
+                                                sim_threshold
+                                            )
+                                            rel_found_topk = rel_sim_max >= float(
+                                                sim_threshold
+                                            )
+
+                                else:
+                                    if expected.strip():
+                                        exp_emb = expected_emb
+                                        if exp_emb is None:
+                                            try:
+                                                exp_emb = emb_model.embed_query(
+                                                    expected
+                                                )
+                                            except Exception:
+                                                try:
+                                                    exp_emb = emb_model.embed_documents(
+                                                        [expected]
+                                                    )[0]
+                                                except Exception:
+                                                    exp_emb = None
+                                        hit_texts = [h.page_content or "" for h in hits]
+                                        if hit_texts and exp_emb is not None:
+                                            try:
+                                                hits_embs = emb_model.embed_documents(
+                                                    hit_texts
+                                                )
+                                            except Exception:
+                                                hits_embs = []
+                                            sims = []
+                                            for he in hits_embs:
+                                                if he is None:
+                                                    sims.append(0.0)
+                                                    continue
+                                                cosh = _cosine_similarity(exp_emb, he)
+                                                sims.append((cosh + 1.0) / 2.0)
+                                            if sims:
+                                                rel_sim_max = max(sims)
+                                                rel_found_top1 = sims[0] >= float(
+                                                    sim_threshold
+                                                )
+                                                rel_found_topk = rel_sim_max >= float(
+                                                    sim_threshold
+                                                )
+                            except Exception:
+                                rel_sim_max = 0.0
+                                if relevant.strip():
+                                    found_any = any(
+                                        (
+                                            relevant.lower()
+                                            in (h.page_content or "").lower()
+                                        )
+                                        for h in hits
+                                    )
+                                    rel_found_topk = found_any
+                                    rel_found_top1 = len(hits) >= 1 and (
+                                        relevant.lower()
+                                        in (hits[0].page_content or "").lower()
+                                    )
+                                elif expected.strip():
                                     found_any = any(
                                         (
                                             expected.lower()
@@ -471,6 +600,18 @@ with test_tab:
                                         for h in hits
                                     )
                                     rel_found_topk = found_any
+                                    rel_found_top1 = len(hits) >= 1 and (
+                                        expected.lower()
+                                        in (hits[0].page_content or "").lower()
+                                    )
+
+                            passed = (
+                                sim >= float(sim_threshold)
+                                if expected.strip()
+                                else False
+                            )
+
+                            top_ids = [_get_doc_id(h) for h in hits]
 
                             results.append(
                                 {
@@ -482,6 +623,7 @@ with test_tab:
                                     "top_ids": top_ids,
                                     "rel_found_top1": rel_found_top1,
                                     "rel_found_topk": rel_found_topk,
+                                    "rel_sim_max": rel_sim_max,
                                     "hits": hits,
                                 }
                             )
@@ -523,13 +665,18 @@ with test_tab:
                                 st.write("**Expected:**", res["expected"])
                                 st.write("**Answer:**")
                                 st.write(res["answer"])
-                                st.write(f"**Similarity:** {res['similarity']:.3f}")
+                                st.write(
+                                    f"**Similarity (answer vs expected):** {res['similarity']:.3f}"
+                                )
                                 st.write(f"**Passed threshold:** {res['passed']}")
                                 st.write(
                                     f"**Relevant found in top-1:** {res['rel_found_top1']}"
                                 )
                                 st.write(
                                     f"**Relevant found in top-{k}:** {res['rel_found_topk']}"
+                                )
+                                st.write(
+                                    f"**Relevant similarity (max across top-{k}):** {res.get('rel_sim_max', 0.0):.3f}"
                                 )
                                 st.write("**Top retrieved IDs:**")
                                 for hid in res["top_ids"]:
