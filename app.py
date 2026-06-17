@@ -236,21 +236,48 @@ with test_tab:
 
     def _parse_test_csv(uploaded_csv) -> List[dict]:
         # return list of dicts: {question, expected, relevant}
+        if uploaded_csv is None:
+            return []
+        # make sure we read from the start (Streamlit UploadedFile may be at EOF if previously read)
+        try:
+            uploaded_csv.seek(0)
+        except Exception:
+            pass
+
         text = None
         try:
             raw = uploaded_csv.read()
             if isinstance(raw, bytes):
-                text = raw.decode("utf-8-sig")
+                # try utf-8 with BOM then fall back to latin-1 with replacement
+                try:
+                    text = raw.decode("utf-8-sig")
+                except Exception:
+                    text = raw.decode("latin-1", errors="replace")
             else:
                 text = str(raw)
         except Exception:
             return []
+
+        if not text or not text.strip():
+            return []
+
         f = io.StringIO(text)
-        reader = csv.DictReader(f)
+        # try to sniff dialect to handle different delimiters/quoting
+        try:
+            sample = text[:4096]
+            dialect = csv.Sniffer().sniff(sample)
+            f.seek(0)
+            reader = csv.DictReader(f, dialect=dialect)
+        except Exception:
+            f.seek(0)
+            reader = csv.DictReader(f)
+
         rows = []
         for r in reader:
-            # normalize keys
-            lower = {k.lower().strip(): (v or "") for k, v in r.items()}
+            if r is None:
+                continue
+            # normalize keys (some CSVs may have weird capitalization/spaces)
+            lower = {str(k).lower().strip(): (v or "") for k, v in r.items()}
             question = ""
             expected = ""
             relevant = ""
@@ -281,6 +308,12 @@ with test_tab:
         # returns (vectordb, chunks) or (None, None) on failure
         if uploaded_pdf is None:
             return None, None
+        # ensure we read the PDF from the start
+        try:
+            uploaded_pdf.seek(0)
+        except Exception:
+            pass
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(uploaded_pdf.read())
             tmp.flush()
