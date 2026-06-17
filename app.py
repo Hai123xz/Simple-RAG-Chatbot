@@ -62,8 +62,12 @@ def hybrid_retrieve(query, k=3):
 # --- LLM ---
 USE_OLLAMA = os.getenv("USE_OLLAMA")=="1"
 if USE_OLLAMA:
-    from langchain_community.llms import Ollama
-    llm = Ollama(model="llama3.1")
+    from langchain_groq import ChatGroq
+    llm = ChatGroq(
+        model="llama-3.1-8b-instant",   # same family as your local model
+        api_key=st.secrets["GROQ_API_KEY"],
+        temperature=0
+    )
 else:
     from langchain_openai import ChatOpenAI
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
