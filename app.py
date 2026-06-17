@@ -15,8 +15,8 @@ from rank_bm25 import BM25Okapi
 
 load_dotenv()
 
-st.set_page_config(page_title="Banking RAG MVP", page_icon="🏦")
-st.title("Banking RAG Chatbot")
+st.set_page_config(page_title="RAG", page_icon="🏦")
+st.title("RAG Chatbot")
 
 # --- Load data ---
 with open("data/banking_faqs.json", encoding="utf-8") as f:
@@ -226,7 +226,7 @@ def answer(query):
 
 
 # --- UI ---
-q = st.text_input("Ask about fees, policies, cards...")
+q = st.text_input("Ask about information in the pdf file")
 if q:
     with st.spinner("Retrieving..."):
         ans, hits = answer(q)
