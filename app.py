@@ -464,7 +464,9 @@ with test_tab:
                                     )
                                     answer_text = context
 
-                            # semantic comparison using embeddings
+                            # semantic comparison using embeddings with sentence-level checks
+                            sim_full = 0.0
+                            sim_sent_max = 0.0
                             sim = 0.0
                             rel_sim_max = 0.0
                             rel_found_top1 = False
@@ -493,50 +495,118 @@ with test_tab:
                                             )[0]
                                         except Exception:
                                             answer_emb = None
+                                # full-answer similarity
                                 if expected_emb is not None and answer_emb is not None:
                                     cos = _cosine_similarity(expected_emb, answer_emb)
-                                    sim = (cos + 1.0) / 2.0
+                                    sim_full = (cos + 1.0) / 2.0
                                 else:
                                     norm = lambda s: (s or "").strip().lower()
                                     if expected.strip():
-                                        sim = difflib.SequenceMatcher(
+                                        sim_full = difflib.SequenceMatcher(
                                             None, norm(expected), norm(answer_text)
                                         ).ratio()
                                     else:
-                                        sim = 0.0
+                                        sim_full = 0.0
+
+                                # sentence-level similarity: split answer and compare each sentence
+                                import re
+
+                                def _split_sentences(text: str):
+                                    if not text or not text.strip():
+                                        return []
+                                    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+                                    return [p.strip() for p in parts if p.strip()]
+
+                                sentences = _split_sentences(answer_text)
+                                if sentences and expected_emb is not None:
+                                    try:
+                                        sent_embs = emb_model.embed_documents(sentences)
+                                    except Exception:
+                                        sent_embs = []
+                                        for s in sentences:
+                                            try:
+                                                sent_embs.append(
+                                                    emb_model.embed_query(s)
+                                                )
+                                            except Exception:
+                                                try:
+                                                    sent_embs.append(
+                                                        emb_model.embed_documents([s])[
+                                                            0
+                                                        ]
+                                                    )
+                                                except Exception:
+                                                    sent_embs.append(None)
+                                    for se in sent_embs:
+                                        if se is None:
+                                            continue
+                                        cos_s = _cosine_similarity(expected_emb, se)
+                                        ssim = (cos_s + 1.0) / 2.0
+                                        if ssim > sim_sent_max:
+                                            sim_sent_max = ssim
+
+                                # final answer similarity is the max of full and sentence-level
+                                sim = max(sim_full, sim_sent_max)
 
                                 # relevant_doc (CSV) similarity to retrieved chunks
                                 if relevant.strip():
-                                    rel_emb = None
                                     try:
-                                        rel_emb = emb_model.embed_query(relevant)
-                                    except Exception:
-                                        rel_emb = emb_model.embed_documents([relevant])[
-                                            0
-                                        ]
-                                    hit_texts = [h.page_content or "" for h in hits]
-                                    if hit_texts:
                                         try:
-                                            hits_embs = emb_model.embed_documents(
-                                                hit_texts
-                                            )
+                                            rel_emb = emb_model.embed_query(relevant)
                                         except Exception:
-                                            hits_embs = []
-                                        sims = []
-                                        for he in hits_embs:
-                                            if he is None:
-                                                sims.append(0.0)
-                                                continue
-                                            cosh = _cosine_similarity(rel_emb, he)
-                                            sims.append((cosh + 1.0) / 2.0)
-                                        if sims:
-                                            rel_sim_max = max(sims)
-                                            rel_found_top1 = sims[0] >= float(
-                                                sim_threshold
+                                            rel_emb = emb_model.embed_documents(
+                                                [relevant]
+                                            )[0]
+                                        hit_texts = [h.page_content or "" for h in hits]
+                                        if hit_texts:
+                                            try:
+                                                hits_embs = emb_model.embed_documents(
+                                                    hit_texts
+                                                )
+                                            except Exception:
+                                                hits_embs = []
+                                                for t in hit_texts:
+                                                    try:
+                                                        hits_embs.append(
+                                                            emb_model.embed_query(t)
+                                                        )
+                                                    except Exception:
+                                                        try:
+                                                            hits_embs.append(
+                                                                emb_model.embed_documents(
+                                                                    [t]
+                                                                )[0]
+                                                            )
+                                                        except Exception:
+                                                            hits_embs.append(None)
+                                            sims = []
+                                            for he in hits_embs:
+                                                if he is None:
+                                                    sims.append(0.0)
+                                                    continue
+                                                cosh = _cosine_similarity(rel_emb, he)
+                                                sims.append((cosh + 1.0) / 2.0)
+                                            if sims:
+                                                rel_sim_max = max(sims)
+                                                rel_found_top1 = sims[0] >= float(
+                                                    sim_threshold
+                                                )
+                                                rel_found_topk = rel_sim_max >= float(
+                                                    sim_threshold
+                                                )
+                                    except Exception:
+                                        found_any = any(
+                                            (
+                                                relevant.lower()
+                                                in (h.page_content or "").lower()
                                             )
-                                            rel_found_topk = rel_sim_max >= float(
-                                                sim_threshold
-                                            )
+                                            for h in hits
+                                        )
+                                        rel_found_topk = found_any
+                                        rel_found_top1 = len(hits) >= 1 and (
+                                            relevant.lower()
+                                            in (hits[0].page_content or "").lower()
+                                        )
 
                                 else:
                                     if expected.strip():
@@ -561,6 +631,20 @@ with test_tab:
                                                 )
                                             except Exception:
                                                 hits_embs = []
+                                                for t in hit_texts:
+                                                    try:
+                                                        hits_embs.append(
+                                                            emb_model.embed_query(t)
+                                                        )
+                                                    except Exception:
+                                                        try:
+                                                            hits_embs.append(
+                                                                emb_model.embed_documents(
+                                                                    [t]
+                                                                )[0]
+                                                            )
+                                                        except Exception:
+                                                            hits_embs.append(None)
                                             sims = []
                                             for he in hits_embs:
                                                 if he is None:
@@ -577,6 +661,8 @@ with test_tab:
                                                     sim_threshold
                                                 )
                             except Exception:
+                                # embedding step failed; fallback to substring checks
+                                sim = sim_full
                                 rel_sim_max = 0.0
                                 if relevant.strip():
                                     found_any = any(
@@ -619,6 +705,8 @@ with test_tab:
                                     "expected": expected,
                                     "answer": answer_text,
                                     "similarity": sim,
+                                    "sim_full": sim_full,
+                                    "sim_sent_max": sim_sent_max,
                                     "passed": passed,
                                     "top_ids": top_ids,
                                     "rel_found_top1": rel_found_top1,
@@ -666,7 +754,13 @@ with test_tab:
                                 st.write("**Answer:**")
                                 st.write(res["answer"])
                                 st.write(
-                                    f"**Similarity (answer vs expected):** {res['similarity']:.3f}"
+                                    f"**Full answer similarity:** {res.get('sim_full', 0.0):.3f}"
+                                )
+                                st.write(
+                                    f"**Max sentence similarity:** {res.get('sim_sent_max', 0.0):.3f}"
+                                )
+                                st.write(
+                                    f"**Similarity used:** {res['similarity']:.3f}"
                                 )
                                 st.write(f"**Passed threshold:** {res['passed']}")
                                 st.write(
