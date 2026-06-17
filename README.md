@@ -1,5 +1,5 @@
 # Simple Chatbot with RAG
-- A simple chatbot app that using RAG for better answer.
+- A simple chatbot app that uses RAG for better answer.
 
 # Run
 - run pip install -r requirements.txt
