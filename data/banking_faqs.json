@@ -1,0 +1,37 @@
+[
+  {
+    "id": "fee-001",
+    "question": "What is the overdraft fee?",
+    "answer": "Overdraft fee is $35 per item, capped at 3 per day. Effective 1 Jan 2026.",
+    "source": "Fee Schedule v2.3",
+    "country": "US"
+  },
+  {
+    "id": "fee-002",
+    "question": "Is there a monthly maintenance fee?",
+    "answer": "No monthly fee if you maintain $1,500 average balance, otherwise $12.",
+    "source": "Retail Checking Terms",
+    "country": "US"
+  },
+  {
+    "id": "transfer-001",
+    "question": "What is the difference between ACH and wire?",
+    "answer": "ACH takes 1-3 business days and costs $0-$3. Wire is same-day domestic ($25) or international ($45).",
+    "source": "Payments Guide",
+    "country": "US"
+  },
+  {
+    "id": "vn-001",
+    "question": "Phí thường niên thẻ tín dụng?",
+    "answer": "Thẻ Classic miễn phí năm đầu, từ năm 2 là 300.000 VND/năm.",
+    "source": "Biểu phí thẻ VN 2026",
+    "country": "VN"
+  },
+  {
+    "id": "security-001",
+    "question": "How do I reset my password?",
+    "answer": "Use 'Forgot password' in app, verify with SMS OTP. We never ask for password by phone.",
+    "source": "Security Policy",
+    "country": "global"
+  }
+]
